@@ -1,9 +1,9 @@
 #!/bin/tcsh
 
-# Version 0.1 - Manuel Michalski
-# Website: www.47k.de
-# Last Update: 30.03.2022
-# Description: pfSense CARP Status Check
+#Version 0.1 - Manuel Michalski
+#Website: www.47k.de
+#Last Update: 30.03.2022
+#Description: pfSense CARP Status Check
 
 ### Set Main Mode #########
 set should=Master
