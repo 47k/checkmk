@@ -24,5 +24,5 @@ if [ $UPDATE = 0 ]; then
         echo "0 '$NAME' Status=$UPDATE OK: Keine neuen Updates | Installierte Version: $LOCAL"
                 else
 		echo "<<<local>>>"
-                echo "1 '$NAME' Status=$UPDATE WARN: Neues $NAME Update - Check $WEBSITE | Installierte Version: $LOCAL | VerfÃ¼gbare Version: $ONLINE"
+                echo "1 '$NAME' Status=$UPDATE WARN: Neues $NAME Update - Check $WEBSITE | Installierte Version: $LOCAL | Verfügbare Version: $ONLINE"
 fi
