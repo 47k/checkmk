@@ -37,7 +37,7 @@ fi
 if [ $DEBUG = YES ]; then
     	echo
     	echo ---- Debug ----
-		echo Upcheck: $UPCHECK
+	echo Upcheck: $UPCHECK
     	echo Status: $STATUS
     	echo Version: $VERSION
     	echo Versionnew: $VERSIONNEW
