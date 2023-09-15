@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # Version 0.1 - Manuel Michalski
-# 47k - www.47k.de
 # Date: 15. September 2023
 # Description: Check TrueNAS Version (Scale)
 
@@ -28,17 +27,17 @@ echo "<<<local>>>"
 if [ "$STATUS" == "AVAILABLE" ]; then
     VERSION=$(echo "$UPCHECK" | jq -r '.changes[0].old.version')
     VERSIONNEW=$(echo "$UPCHECK" | jq -r '.changes[0].new.version')
-    echo "1 'TrueNAS Version' WARN: Update $STATUS | Installed Version: $VERSION Available Version: $VERSIONNEW"
+    echo "1 'TrueNAS Version' Update=1 WARN: Update $STATUS | Installed Version: $VERSION Available Version: $VERSIONNEW"
     exit 1
 else
-    echo "0 'TrueNAS Version' OK: No updates available"
+    echo "0 'TrueNAS Version' Update=0 OK: No updates available"
     exit 0
 fi
 
 if [ $DEBUG = YES ]; then
     	echo
     	echo ---- Debug ----
-	    echo Upcheck: $UPCHECK
+		echo Upcheck: $UPCHECK
     	echo Status: $STATUS
     	echo Version: $VERSION
     	echo Versionnew: $VERSIONNEW
