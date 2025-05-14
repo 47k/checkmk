@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version 0.1 - Manuel Michalski
+# Version 0.2 - Manuel Michalski
 # Website: www.47k.de
 # Datum: 14.05.2025
 # Description: MBUF Cluster Usage Monitor für pfSense
@@ -18,8 +18,9 @@ done
 limit_items=$(sysctl -n vm.uma.mbuf_cluster.limit.items 2>/dev/null)
 free_items=$(sysctl -n vm.uma.mbuf_cluster.keg.domain.0.free_items 2>/dev/null)
 cluster_total=$(sysctl -n vm.uma.mbuf_cluster.limit.max_items 2>/dev/null)
+cluster_current=$(sysctl -n vm.uma.mbuf_cluster.stats.current 2>/dev/null)
 
-if [ -z "$limit_items" ] || [ -z "$free_items" ] || [ -z "$cluster_total" ]; then
+if [ -z "$limit_items" ] || [ -z "$free_items" ] || [ -z "$cluster_total" ] || [ -z "$cluster_current" ]; then
     echo "UNKNOWN - Konnte Cluster-Werte nicht auslesen | mbuf_cluster_usage=0%;${WARNING_THRESHOLD};${CRITICAL_THRESHOLD};0;100"
     exit 3
 fi
@@ -35,4 +36,4 @@ else
     status="OK"
 fi
 
-echo "$status - Cluster usage at ${usage_percent}% ($cluster_used/$cluster_total) | mbuf_cluster_usage=${usage_percent}%;${WARNING_THRESHOLD};${CRITICAL_THRESHOLD};0;100"
+echo "$status - Cluster usage at ${usage_percent}% ($cluster_used/$cluster_total) | mbuf_cluster_usage=${usage_percent}%;${WARNING_THRESHOLD};${CRITICAL_THRESHOLD};0;100 mbuf_cluster_used=${cluster_used};;;0;${cluster_total} mbuf_cluster_current=${cluster_current};;;0;${cluster_total} mbuf_cluster_total=${cluster_total}"
