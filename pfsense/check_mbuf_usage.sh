@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version 0.2 - Manuel Michalski
+# Version 0.3 - Manuel Michalski
 # Website: www.47k.de
 # Datum: 14.05.2025
 # Description: MBUF Cluster Usage Monitor für pfSense
