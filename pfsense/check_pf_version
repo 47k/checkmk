@@ -1,0 +1,257 @@
+#!/usr/local/bin/php -f
+<?php
+/*
+ * pfSense Version/Branch Check (pfSense Plus)
+ * - Vergleicht installierte Version, Repo-Train und "Latest Plus" (released) von Netgate
+ * - Warnt, wenn:
+ *     • Branch ≠ current
+ *     • Installierte Version < Repo-Train (du hast Updates offen)
+ *     • Repo-Train < Netgate-Latest  (du hängst auf "previous")
+ *     • Installierte Version < Netgate-Latest
+ *
+ * Optionen:
+ *   --no-web  : Netgate-Webabfrage überspringen (Latest=Repo-Train)
+ *   --debug   : Debug auf stderr
+ *
+ * Edit: Manuel Michalski <www.47k.de>
+ * Date: 12.08.2025
+ * Version: 1.0
+ */
+
+require_once("pkg-utils.inc");
+global $g;
+
+/* -------- CLI -------- */
+$ARGS = [
+    'no_web' => in_array('--no-web', $argv, true),
+    'debug'  => in_array('--debug',  $argv, true),
+];
+function dbg($msg){ global $ARGS; if ($ARGS['debug']) file_put_contents('php://stderr', "[DBG] $msg\n"); }
+
+/* -------- Helpers -------- */
+
+function ver_to_tuple($v) {
+    if (!preg_match('/^\d{2}\.\d{2}$/', $v)) return [0,0];
+    [$maj,$min] = explode('.', $v);
+    return [(int)$maj,(int)$min];
+}
+function ver_lt($a, $b) {
+    [$am,$an] = ver_to_tuple($a);
+    [$bm,$bn] = ver_to_tuple($b);
+    return ($am < $bm) || ($am === $bm && $an < $bn);
+}
+function clean_ver($s) {
+    // z. B. "25.07-RELEASE" -> "25.07"
+    if (preg_match('/\d{2}\.\d{2}/', $s, $m)) return $m[0];
+    return null;
+}
+
+function http_get_best_effort($url) {
+    $ctx = stream_context_create([
+        'http' => [
+            'method'  => 'GET',
+            'timeout' => 8,
+            'header'  => "User-Agent: pfSense-Version-Check/1.3\r\n",
+        ],
+        'ssl' => [
+            'verify_peer'      => true,
+            'verify_peer_name' => true,
+            'allow_self_signed'=> false,
+        ],
+    ]);
+    $data = @file_get_contents($url, false, $ctx);
+    if ($data !== false && strlen($data) > 1500) return $data;
+
+    $curl = is_executable('/usr/local/bin/curl') ? '/usr/local/bin/curl' : (is_executable('/usr/bin/curl') ? '/usr/bin/curl' : null);
+    if ($curl) {
+        $cmd = escapeshellcmd($curl) . ' -fsSL --max-time 8 -A "pfSense-Version-Check/1.3" ' . escapeshellarg($url) . ' 2>/dev/null';
+        $data = @shell_exec($cmd);
+        if (!empty($data) && strlen($data) > 1500) return $data;
+    }
+
+    if (is_executable('/usr/bin/fetch')) {
+        $cmd = '/usr/bin/fetch -q -o - -T 8 ' . escapeshellarg($url) . ' 2>/dev/null';
+        $data = @shell_exec($cmd);
+        if (!empty($data) && strlen($data) > 1500) return $data;
+    }
+
+    return null;
+}
+
+/* ---- Data Sources ---- */
+
+function read_branch() {
+    if (is_readable('/conf/branch')) {
+        $b = strtolower(trim(file_get_contents('/conf/branch')));
+        if ($b !== '') return $b;
+    }
+    if (is_readable('/conf/config.xml')) {
+        $xml = @simplexml_load_file('/conf/config.xml');
+        if ($xml) {
+            foreach ([$xml->update->branch ?? null, $xml->system->update->branch ?? null, $xml->firmware->branch ?? null] as $node) {
+                $val = strtolower(trim((string)$node));
+                if ($val !== '') return $val;
+            }
+            $matches = $xml->xpath('//branch');
+            if (!empty($matches)) {
+                $val = strtolower(trim((string)$matches[0]));
+                if ($val !== '') return $val;
+            }
+        }
+    }
+    $repo = '/usr/local/etc/pkg/repos/pfSense.conf';
+    if (is_readable($repo)) {
+        $c = file_get_contents($repo);
+        if (preg_match('/branch:\s*"(current|previous|development)"/i', $c, $m)) {
+            return strtolower($m[1]);
+        }
+    }
+    return 'current';
+}
+
+function read_repo_train() {
+    $repo = '/usr/local/etc/pkg/repos/pfSense.conf';
+    if (!is_readable($repo)) return null;
+    $c = file_get_contents($repo);
+    if (preg_match('/pfSense_plus-v(\d{2})_(\d{2})/i', $c, $m)) {
+        return sprintf('%d.%02d', (int)$m[1], (int)$m[2]); // 25.07
+    }
+    return null;
+}
+
+/**
+ * Installierte Version & Remote-Version:
+ * - installed: zuerst /etc/version (robust), dann get_system_pkg_version()
+ * - remote   : zuerst get_system_pkg_version(), sonst Fallback auf $repoTrain
+ */
+function read_versions_with_fallback($repoTrain = null) {
+    global $g;
+
+    // installed via /etc/version
+    $installed = null;
+    if (is_readable('/etc/version')) {
+        $v = trim(@file_get_contents('/etc/version'));
+        $v = clean_ver($v);
+        if ($v) $installed = $v;
+    }
+
+    // get_system_pkg_version als Ergänzung
+    $remote = null;
+    $vinfo  = null;
+    if (file_exists("{$g['varrun_path']}/pkg.dirty")) {
+        $vinfo = @get_system_pkg_version(false,false);
+    } else {
+        @shell_exec("touch " . escapeshellarg("{$g['varrun_path']}/pkg.dirty"));
+        $vinfo = @get_system_pkg_version(false,false);
+        @shell_exec("rm -f " . escapeshellarg("{$g['varrun_path']}/pkg.dirty"));
+    }
+
+    if (is_array($vinfo)) {
+        if (!$installed && !empty($vinfo['installed_version'])) {
+            $iv = clean_ver($vinfo['installed_version']);
+            if ($iv) $installed = $iv;
+        }
+        if (!empty($vinfo['version'])) {
+            $rv = clean_ver($vinfo['version']);
+            if ($rv) $remote = $rv;
+        }
+    }
+
+    // Fallbacks
+    if (!$installed) $installed = 'n/a';
+    if (!$remote)    $remote    = $repoTrain ?: 'n/a';
+
+    $buildtime = @trim(@file_get_contents('/etc/version.buildtime')) ?: 'n/a';
+    return [$installed, $remote, $buildtime];
+}
+
+/**
+ * Neueste **released** pfSense Plus 25.x-Version von Netgate (ohne TBD).
+ */
+function latest_plus_version_from_netgate() {
+    $url  = 'https://docs.netgate.com/pfsense/en/latest/releases/versions.html';
+    $html = http_get_best_effort($url);
+    if ($html === null) return null;
+
+    if (preg_match('/<h2[^>]*>\s*pfSense Plus software.*?25\.x\s*<\/h2>(.*?)<(h2|\/main|\/div)/si', $html, $m)) {
+        $section = $m[1];
+    } else {
+        $section = $html;
+    }
+
+    preg_match_all('/<tr[^>]*>(.*?)<\/tr>/si', $section, $rows);
+    $best = null;
+    if (!empty($rows[1])) {
+        foreach ($rows[1] as $row) {
+            if (!preg_match('/>\s*(25\.\d{2})\s*</', $row, $vm)) continue;
+            $ver = $vm[1];
+            if (preg_match('/TBD/i', $row)) continue;
+            if (preg_match('/fa-?clock|fa-?hourglass/i', $row)) continue;
+            if (!preg_match('/\b(20\d{2}-\d{2}-\d{2})\b/', $row)) continue;
+            if ($best === null || ver_lt($best, $ver)) $best = $ver;
+        }
+    }
+    return $best;
+}
+
+/* ---- Main ---- */
+
+$branch    = read_branch();                 // current/previous/development
+$repoTrain = read_repo_train();             // z. B. 25.07
+list($installed, $remoteRepo, $buildtime) = read_versions_with_fallback($repoTrain);
+
+if ($ARGS['no_web']) {
+    $latest = $repoTrain;
+    dbg("no-web: latest=$latest");
+} else {
+    $latest = latest_plus_version_from_netgate();
+    if ($latest === null && $repoTrain !== null) {
+        $latest = $repoTrain; // Fallback ohne False Positives
+        dbg("netgate fetch failed, fallback latest=$latest");
+    } else {
+        dbg("netgate latest=$latest");
+    }
+}
+
+$exit = 0;
+$out  = "";
+
+// Branch-Drift
+if ($branch !== 'current') {
+    $out .= "WARNING - system not on current branch: $branch\n";
+    $exit = 1;
+}
+
+// Installiert vs Repo-Train (dein Fall nach Branch-Umschaltung)
+if ($installed !== 'n/a' && $repoTrain && ver_lt($installed, $repoTrain)) {
+    $out .= "WARNING - upgrade available in repo train: $installed -> $repoTrain\n";
+    $exit = 1;
+}
+
+// Repo-Train vs Netgate-Latest
+if ($repoTrain && $latest && ver_lt($repoTrain, $latest)) {
+    $out .= "WARNING - repo train behind Netgate latest: repo=$repoTrain latest=$latest\n";
+    $exit = 1;
+}
+
+// Installiert vs Netgate-Latest
+if ($installed !== 'n/a' && $latest && ver_lt($installed, $latest)) {
+    $out .= "WARNING - new major/minor release available: $installed -> $latest\n";
+    $exit = 1;
+}
+
+// Wenn nichts gewarnt hat
+if ($exit === 0) {
+    $out .= "OK - already at latest version\n";
+}
+
+// Ausgabe
+$out .= "Current version: ".($installed ?: 'n/a')."\n";
+$out .= "Built on: ".($buildtime ?: 'n/a')."\n";
+$out .= "Remote version (repo): ".($remoteRepo ?: 'n/a')."\n";
+$out .= "Repo train: ".($repoTrain ?: 'n/a')."\n";
+$out .= "Latest Plus (Netgate): ".($latest ?: 'n/a')."\n";
+$out .= "Branch: ".$branch."\n";
+
+echo $out;
+exit($exit);
