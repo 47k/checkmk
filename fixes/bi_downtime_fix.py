@@ -4,7 +4,7 @@
 # 2. nano ~/local/lib/python3/cmk/gui/plugins/views/bi_downtime_fix.py
 # 3. omd restart apache
 #
-# Author Manuel Michalski - www.47k.de
+# Author Manuel Michalski - www.47k.de / ChatGPT
 # Date: 23.09.2025
 
 import logging
